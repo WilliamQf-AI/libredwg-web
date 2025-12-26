@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@mlightcad/libredwg-web':
+        specifier: ^0.4.3
+        version: 0.4.5
+
+packages:
+
+  '@mlightcad/libredwg-web@0.4.5':
+    resolution: {integrity: sha512-dEOEnSE0M1PDoLcarrjaS3nBCyA3VTCeMSBSmg4Hr0XcnHI4oAlwzp3MdBPllqqi2oMDNw/Am2/wu80qGiYQzQ==}
+
+snapshots:
+
+  '@mlightcad/libredwg-web@0.4.5': {}
