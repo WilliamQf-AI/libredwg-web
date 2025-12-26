@@ -866,7 +866,6 @@ int dxf_write_file_wrapper(const std::string& filename, uintptr_t dwg_ptr) {
   }
   
   // 调用核心转换函数
-  // 注意：如果你想支持二进制 DXF，可以根据参数调用 dwg_write_dxfb
   int error = dwg_write_dxf(&dat, dwg);
   
   fclose(dat.fh);
@@ -888,8 +887,7 @@ int dxf_write_binary_wrapper(const std::string& filename, uintptr_t dwg_ptr) {
     return DWG_ERR_IOERROR;
   }
   
-  // 调用核心转换函数
-  // 注意：如果你想支持二进制 DXF，可以根据参数调用 dwg_write_dxfb
+  // 调用核心转换函数 二进制
   int error = dwg_write_dxfb(&dat, dwg);
   
   fclose(dat.fh);

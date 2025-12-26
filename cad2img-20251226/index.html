@@ -15,6 +15,7 @@
     
     <script src="scripts/jspdf.umd.min.js"></script>
     <script src="scripts/svg2pdf.umd.min.js"></script>
+    <script src="scripts/jszip.min.js"></script>
     
     <style>
         /* 全局布局设定 */
@@ -263,7 +264,7 @@
                     locateFile: (path) => path.endsWith('.wasm') ? './lib/libredwg-web.wasm' : path
                 });
                 libreDwg = new LibreDwg(wasmInstance);
-                window.wasmInstance = wasmInstance; // 暴露给全局以便调用底层函数
+                window.wasmInstance = wasmInstance; 
 
                 dxfViewer = new DxfViewer({
                     containerId: "myCanvas",
@@ -272,18 +273,19 @@
                     enableAutoFit: true,
                     backgroundColor: '#ffffff',
                     alpha: true,
+                    preserveDrawingBuffer: true 
                 });
                 window.dxfViewer = dxfViewer; 
                 await dxfViewer.setFont(["./demo/libs/fonts/hztxt.shx", "./demo/libs/fonts/simplex.shx"]);
                 
                 const statusEl = document.getElementById('engine-status');
-                statusEl.textContent = '引擎已就绪';
+                statusEl.textContent = 'wasm已就绪';
                 statusEl.style.color = '#52c41a';
                 document.getElementById('fileInput').disabled = false;
 
             } catch (e) {
                 console.error(e);
-                document.getElementById('engine-status').textContent = '引擎初始化失败';
+                document.getElementById('engine-status').textContent = 'wasm初始化失败';
                 document.getElementById('engine-status').style.color = 'red';
             }
         }
@@ -292,27 +294,17 @@
         function tryConvertDwgToDxf(dwgDataPtr, wasm) {
             const tmpDxfName = 'temp_convert.dxf';
             try {
-                // 探测可能的导出函数名 (取决于编译时的 EXPORTED_FUNCTIONS)
-                // 常见的名字是 dxf_write_file 或 dwg_write_dxf
                 let writeFunc = wasm.dxf_write_file || wasm.dwg_write_dxf || wasm._dxf_write_file;
-                
-                if (typeof writeFunc !== 'function') {
-                    console.warn("当前 LibreDwg WASM 版本不支持 DXF 导出 (缺少 dxf_write_file 函数)");
-                    return null;
-                }
+                if (typeof writeFunc !== 'function') return null;
 
                 console.log("正在尝试将 DWG 转换为 DXF...");
-                // 调用 C 函数写入虚拟文件系统
                 const result = writeFunc(tmpDxfName, dwgDataPtr);
                 
-                if (result === 0) { // 0 通常表示成功
+                if (result === 0) {
                     console.log("DwgToDxf 转换成功");
                     const dxfBytes = wasm.FS.readFile(tmpDxfName);
-                    // 清理虚拟文件
                     wasm.FS.unlink(tmpDxfName);
                     return new Blob([dxfBytes], { type: 'application/dxf' });
-                } else {
-                    console.warn("LibreDwg DXF 导出函数返回错误码:", result);
                 }
             } catch (e) {
                 console.warn("DWG -> DXF 转换尝试失败:", e);
@@ -320,7 +312,7 @@
             return null;
         }
 
-        // --- 通用：加载 DXF 到 Viewer (支持原生 DXF 和转换后的 DXF) ---
+        // --- 加载 DXF 到 Viewer ---
         async function loadDxfToViewer(blobUrl, fileName, versionSpan) {
             document.getElementById('svg-container').style.display = 'none';
             document.getElementById('myCanvas').style.display = 'block';
@@ -338,14 +330,13 @@
             versionSpan.textContent = "预览就绪: " + fileName;
             updateLayoutBar();
             
-            // 界面调整
-            document.getElementById('download-btn').disabled = true;
-            document.getElementById('download-pdf-btn').disabled = true;
-            // 如果是转换来的，保存DWG按钮依然可用(因为我们有原始DWG数据)，如果是纯DXF则禁用
-            // 这里简单起见先禁用，因为逻辑复杂
-            document.getElementById('save-dwg-btn').disabled = true;
+            document.getElementById('download-btn').disabled = false;
+            document.getElementById('download-pdf-btn').disabled = false;
+            // 只有当原文件是 DWG 时，才允许“另存版本”
+            // 如果是 DXF，禁用此按钮
+            const isDwg = fileName.toLowerCase().endsWith('.dwg');
+            document.getElementById('save-dwg-btn').disabled = !isDwg;
 
-            // 强制刷新视图
             const currentColor = document.getElementById('background-color-picker').value;
             updateBackgroundColor(currentColor);
             setTimeout(() => {
@@ -371,7 +362,6 @@
 
             versionSpan.textContent = "生成 SVG 中: " + fileName;
             
-            // 使用 LibreDwg -> SVG 转换器
             const db = new LibreDwgConverter(libreDwg).convert(currentDwgDataPtr);
             currentSvgStr = new SvgConverter().convert(db);
             
@@ -380,7 +370,10 @@
 
             document.getElementById('download-btn').disabled = false;
             document.getElementById('download-pdf-btn').disabled = false;
-            document.getElementById('save-dwg-btn').disabled = false;
+            // 只有当原文件是 DWG 时，才允许“另存版本”
+            // 如果是 DXF，禁用此按钮
+            const isDwg = fileName.toLowerCase().endsWith('.dwg');
+            document.getElementById('save-dwg-btn').disabled = !isDwg;
 
             const currentColor = document.getElementById('background-color-picker').value;
             updateBackgroundColor(currentColor);
@@ -399,33 +392,24 @@
             }
 
             currentOutputFilename = file.name.replace(/\.[^.]+$/, '');
+             currentSvgStr = ''; 
             const isDxf = file.name.toLowerCase().endsWith('.dxf');
 
             try {
-                // 1. 无论是 DWG 还是 DXF，先尝试用 LibreDwg 读取数据结构
-                //    这样做的好处是我们可以统一管理内存，并且为 DWG 转 DXF 做准备
                 const buf = await file.arrayBuffer();
-                
-                // LibreDwg 读取数据
                 currentDwgDataPtr = libreDwg.dwg_read_data(new Uint8Array(buf), Dwg_File_Type.DWG);
                 if (!currentDwgDataPtr) throw new Error("文件解析失败");
 
                 let previewSuccess = false;
 
-                // 2. 尝试进入 3D 预览模式 (Gemini Viewer)
                 try {
                     let dxfBlobUrl = null;
-
                     if (isDxf) {
-                        // 如果本身是 DXF，直接用源文件
                         dxfBlobUrl = URL.createObjectURL(file);
                     } else {
-                        // 如果是 DWG，尝试转换为 DXF
                         versionSpan.textContent = "尝试转换 DWG 为 DXF...";
                         const dxfBlob = tryConvertDwgToDxf(currentDwgDataPtr, window.wasmInstance);
-                        if (dxfBlob) {
-                            dxfBlobUrl = URL.createObjectURL(dxfBlob);
-                        }
+                        if (dxfBlob) dxfBlobUrl = URL.createObjectURL(dxfBlob);
                     }
 
                     if (dxfBlobUrl) {
@@ -437,7 +421,6 @@
                     console.warn("预览引擎加载失败:", previewErr);
                 }
 
-                // 3. 如果预览失败 (转换失败、Viewer崩溃、或不支持转换)，降级到 SVG
                 if (!previewSuccess) {
                     fallbackToSvg(versionSpan, file.name);
                 }
@@ -477,17 +460,282 @@
             } catch (e) { console.warn(e); }
         }
 
-        document.getElementById('download-btn').onclick = () => {
-            const blob = new Blob([currentSvgStr], { type: 'image/svg+xml' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = currentOutputFilename + '.svg';
-            a.click();
+        // --- 辅助函数：获取当前 Viewer 截图 ---
+        function getViewerSnapshot() {
+            const canvas = document.querySelector('#myCanvas canvas');
+            if (!canvas) return null;
+            if (dxfViewer && typeof dxfViewer.render === 'function') dxfViewer.render();
+            const bgColor = document.getElementById('background-color-picker').value;
+            return {
+                dataUrl: canvas.toDataURL('image/png'),
+                width: canvas.width,
+                height: canvas.height,
+                bgColor: bgColor
+            };
+        }
+
+        // --- 核心函数：自动遍历所有布局并截图 (修复导出后视图错位问题) ---
+        async function captureAllLayouts(statusBtn) {
+            const layouts = dxfViewer.getLayoutNames(); 
+            if (!layouts || layouts.length === 0) {
+                const snap = getViewerSnapshot();
+                return snap ? [{ name: 'Current', ...snap }] : [];
+            }
+
+            let originalLayoutName = 'Model';
+            const activeBtn = document.querySelector('.model-layout-switch-item.activate');
+            if (activeBtn) {
+                originalLayoutName = activeBtn.innerText === '模型' ? 'Model' : activeBtn.innerText;
+            }
+
+            const results = [];
+            const bgColor = document.getElementById('background-color-picker').value;
+
+            try {
+                for (let i = 0; i < layouts.length; i++) {
+                    const name = layouts[i];
+                    // 只更新状态，不记录原始文字
+                    statusBtn.innerText = `处理中 ${i + 1}/${layouts.length}: ${name}`;
+                    
+                    dxfViewer.activateLayout(name);
+                    updateLayoutBarUI(name); 
+
+                    await new Promise(r => setTimeout(r, 600));
+                    if (typeof dxfViewer.fit === 'function') dxfViewer.fit();
+                    await new Promise(r => setTimeout(r, 300));
+                    
+                    updateBackgroundColor(bgColor);
+                    const snap = getViewerSnapshot();
+                    if (snap) results.push({ name: name, ...snap });
+                }
+            } finally {
+                // 恢复视图
+                statusBtn.innerText = "正在恢复视图...";
+                dxfViewer.activateLayout(originalLayoutName);
+                updateLayoutBarUI(originalLayoutName);
+                
+                // 等待视图恢复，但不要在这里重置按钮文字，
+                // 让外部的 onclick 函数去重置它。
+                await new Promise(r => setTimeout(r, 200));
+                
+                if (typeof dxfViewer.fit === 'function') dxfViewer.fit();
+                updateBackgroundColor(bgColor);
+            }
+            
+            return results;
+        }
+
+        // --- 新增辅助函数：专门用于更新布局条的高亮状态 ---
+        function updateLayoutBarUI(activeName) {
+            const container = document.getElementById('layoutBarItems');
+            if (!container) return;
+            Array.from(container.children).forEach(btn => {
+                // 按钮显示的文字
+                const btnText = btn.innerText;
+                // 对应的内部布局名
+                const layoutName = btnText === '模型' ? 'Model' : btnText;
+                
+                if (layoutName === activeName) {
+                    btn.classList.add('activate');
+                    // 确保高亮的按钮在可视区域内 (如果布局很多)
+                    btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                } else {
+                    btn.classList.remove('activate');
+                }
+            });
+        }
+
+        // ============================================================
+        // 智能导出 SVG 
+        // ============================================================
+        document.getElementById('download-btn').onclick = async () => {
+            const btn = document.getElementById('download-btn');
+            const oldText = btn.innerText;
+            btn.disabled = true;
+
+            try {
+                const isFallbackMode = document.getElementById('svg-container').style.display !== 'none';
+
+                if (isFallbackMode) {
+                    // --- 方案 A: 降级模式 (直接导出 SVG, 修复背景色) ---
+                    if (!currentSvgStr) throw new Error("无有效 SVG 数据");
+                    
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(currentSvgStr, "image/svg+xml");
+                    const svg = doc.documentElement;
+                    const bgColor = document.getElementById('background-color-picker').value;
+                    
+                    // 获取 viewBox 以正确放置背景
+                    let x = 0, y = 0, w = "100%", h = "100%";
+                    const vb = svg.getAttribute("viewBox");
+                    if (vb) {
+                        const parts = vb.split(/\s+|,/);
+                        if (parts.length === 4) {
+                            x = parts[0]; y = parts[1]; w = parts[2]; h = parts[3];
+                        }
+                    }
+
+                    const bgRect = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    bgRect.setAttribute("x", x); bgRect.setAttribute("y", y);
+                    bgRect.setAttribute("width", w); bgRect.setAttribute("height", h);
+                    bgRect.setAttribute("fill", bgColor);
+                    
+                    if (svg.firstChild) svg.insertBefore(bgRect, svg.firstChild);
+                    else svg.appendChild(bgRect);
+
+                    const serializer = new XMLSerializer();
+                    const blob = new Blob([serializer.serializeToString(svg)], { type: 'image/svg+xml' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${currentOutputFilename}_fallback.svg`;
+                    a.click();
+
+                } else {
+                    // --- 方案 B: 截图模式 (多布局打包) ---
+                    const snaps = await captureAllLayouts(btn);
+                    if (snaps.length === 0) throw new Error("未获取到画面");
+
+                    if (snaps.length === 1) {
+                        const snap = snaps[0];
+                        const svgContent = `
+<svg xmlns="http://www.w3.org/2000/svg" width="${snap.width}" height="${snap.height}" viewBox="0 0 ${snap.width} ${snap.height}">
+    <rect width="100%" height="100%" fill="${snap.bgColor}" />
+    <image href="${snap.dataUrl}" x="0" y="0" width="${snap.width}" height="${snap.height}" />
+</svg>`;
+                        const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `${currentOutputFilename}_${snap.name}.svg`;
+                        a.click();
+                    } else {
+                        if (!window.JSZip) throw new Error("JSZip 未加载，请检查 HTML 引入");
+                        const zip = new JSZip();
+                        snaps.forEach(snap => {
+                            const svgContent = `
+<svg xmlns="http://www.w3.org/2000/svg" width="${snap.width}" height="${snap.height}" viewBox="0 0 ${snap.width} ${snap.height}">
+    <rect width="100%" height="100%" fill="${snap.bgColor}" />
+    <image href="${snap.dataUrl}" x="0" y="0" width="${snap.width}" height="${snap.height}" />
+</svg>`;
+                            zip.file(`${snap.name}.svg`, svgContent);
+                        });
+                        btn.innerText = "打包中...";
+                        const content = await zip.generateAsync({ type: "blob" });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(content);
+                        a.download = `${currentOutputFilename}_svgs.zip`;
+                        a.click();
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                alert("导出失败: " + e.message);
+            } finally {
+                btn.innerText = oldText;
+                btn.disabled = false;
+            }
         };
 
+        // ============================================================
+        // 智能导出 PDF (修复空白问题)
+        // ============================================================
         document.getElementById('download-pdf-btn').onclick = async () => {
-            if (!window.jspdf || !window.svg2pdf) { alert("PDF 库未加载"); return; }
-            alert("PDF 导出功能已触发");
+            if (!window.jspdf) { alert("PDF 库未加载"); return; }
+            
+            const btn = document.getElementById('download-pdf-btn');
+            const oldText = btn.innerText;
+            btn.disabled = true;
+            btn.innerText = "处理中...";
+
+            try {
+                const isFallbackMode = document.getElementById('svg-container').style.display !== 'none';
+                const { jsPDF } = window.jspdf;
+
+                if (isFallbackMode) {
+                    // --- 方案 A: 降级模式 (Canvas 转图片方案) ---
+                    if (!currentSvgStr) throw new Error("无有效 SVG 数据");
+
+                    const parser = new DOMParser();
+                    const docElem = parser.parseFromString(currentSvgStr, "image/svg+xml").documentElement;
+                    
+                    let vbW = 1000, vbH = 1000;
+                    if (docElem.getAttribute("viewBox")) {
+                        const vb = docElem.getAttribute("viewBox").split(/\s+|,/);
+                        if(vb.length === 4) { vbW = parseFloat(vb[2]); vbH = parseFloat(vb[3]); }
+                    }
+
+                    // 限制 Canvas 最大尺寸防止崩溃
+                    const maxDim = 4000;
+                    let canvasW = vbW, canvasH = vbH;
+                    const scale = Math.min(maxDim / vbW, maxDim / vbH);
+                    canvasW = vbW * scale;
+                    canvasH = vbH * scale;
+
+                    const canvas = document.createElement("canvas");
+                    canvas.width = canvasW;
+                    canvas.height = canvasH;
+                    const ctx = canvas.getContext("2d");
+
+                    // 填充背景
+                    const bgColor = document.getElementById('background-color-picker').value;
+                    ctx.fillStyle = bgColor;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // SVG -> Image -> Canvas
+                    const img = new Image();
+                    docElem.setAttribute("width", canvasW + "px");
+                    docElem.setAttribute("height", canvasH + "px");
+                    
+                    const serializer = new XMLSerializer();
+                    const svgString = serializer.serializeToString(docElem);
+                    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+                    const url = URL.createObjectURL(svgBlob);
+
+                    await new Promise((resolve, reject) => {
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvasW, canvasH);
+                            resolve();
+                        };
+                        img.onerror = () => reject(new Error("SVG 渲染失败"));
+                        img.src = url;
+                    });
+                    URL.revokeObjectURL(url);
+
+                    // 生成 PDF
+                    const imgData = canvas.toDataURL("image/png");
+                    const orientation = canvasW > canvasH ? 'l' : 'p';
+                    const doc = new jsPDF(orientation, 'pt', 'a4');
+                    const pdfW = doc.internal.pageSize.getWidth();
+                    const pdfH = doc.internal.pageSize.getHeight();
+
+                    doc.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+                    doc.save(currentOutputFilename + '_fallback.pdf');
+
+                } else {
+                    // --- 方案 B: 截图模式 ---
+                    const snaps = await captureAllLayouts(btn);
+                    if (snaps.length === 0) throw new Error("未获取到画面");
+
+                    const doc = new jsPDF('l', 'px', [100, 100]); 
+                    doc.deletePage(1);
+
+                    snaps.forEach(snap => {
+                        const orientation = snap.width > snap.height ? 'l' : 'p';
+                        doc.addPage([snap.width, snap.height], orientation);
+                        doc.setFillColor(snap.bgColor);
+                        doc.rect(0, 0, snap.width, snap.height, 'F');
+                        doc.addImage(snap.dataUrl, 'PNG', 0, 0, snap.width, snap.height);
+                    });
+
+                    doc.save(currentOutputFilename + '.pdf');
+                }
+
+            } catch (e) {
+                console.error(e);
+                alert("PDF 生成失败: " + e.message);
+            } finally {
+                btn.innerText = oldText;
+                btn.disabled = false;
+            }
         };
 
         document.getElementById('save-dwg-btn').onclick = async () => {
