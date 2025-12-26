@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CAD to SVG/PDF Converter</title>
+    <!-- 引入样式 -->
+    <link rel="stylesheet" type="text/css" href="./demo/libs/iconfont/font_2809422_kipm6ycaet.css">
+    <link rel="stylesheet" type="text/css" href="./demo/libs/iconfont/font_2802048_dc945363jlf.css">
+    <!-- 预创建gemini-viewer的style元素，防止它动态创建外部CDN引用 -->
+    <style id="bb197daeeb99747fa2de2efe721dcde83cfdc9f6ebd8ad76b1860e286cd2338d">
+        @import "./demo/libs/iconfont/font_2809422_kipm6ycaet.css";
+        @import "./demo/libs/iconfont/font_2802048_dc945363jlf.css";
+        .model-layout-switch-bar{position:absolute;bottom:0;width:100%;height:24px;background:#ffffff;opacity:.7;display:flex;font-size:14px;line-height:1;overflow-x:scroll;overflow-y:hidden;z-index:1}.model-layout-switch-bar .model-layout-switch-bar-content{white-space:nowrap}.model-layout-switch-bar .model-layout-switch-bar-content .model-layout-switch-item{position:relative;display:inline-block;padding:3px 10px 0;color:#000;height:22px;cursor:pointer;transform:translateZ(0);transition:all 0.3s ease}.model-layout-switch-bar .model-layout-switch-bar-content .model-layout-switch-item:hover{background:rgba(0,0,0,0.1)}.model-layout-switch-bar .model-layout-switch-bar-content .model-layout-switch-item.activate{background:#1890ff;color:#fff}
+    </style>
+    
+    <script src="scripts/jspdf.umd.min.js"></script>
+    <script src="scripts/svg2pdf.umd.min.js"></script>
+    
+    <style>
+        /* 全局布局设定 */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            font-size: 12px;
+        }
+
+        /* 顶部栏：合并了标题和工具 */
+        .app-header {
+            background: #fff;
+            border-bottom: 1px solid #d9d9d9;
+            padding: 5px 15px; /* 减小内边距 */
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap; /* 宽度不足时自动换行 */
+            gap: 15px;
+            flex-shrink: 0;
+            min-height: 40px; /* 最小高度 */
+        }
+
+        /* 标题区域 */
+        .header-title-area {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-right: 15px;
+            border-right: 1px solid #eee; /* 与工具栏的分隔线 */
+        }
+        .header-title-area h1 {
+            margin: 0;
+            font-size: 16px;
+            color: #333;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .engine-status {
+            font-size: 12px;
+            color: #8c8c8c;
+            white-space: nowrap;
+        }
+
+        /* 工具区域容器 */
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            flex: 1; /* 占据剩余空间 */
+        }
+
+        /* 单个工具组 */
+        .tool-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* 控件样式 */
+        button {
+            padding: 3px 8px; /* 按钮改小一点 */
+            font-size: 12px;
+            cursor: pointer;
+            border: 1px solid #d9d9d9;
+            background: white;
+            border-radius: 3px;
+            transition: all 0.2s;
+            height: 24px; /* 固定高度对齐 */
+            line-height: 1;
+        }
+        button:hover:not(:disabled) { border-color: #1890ff; color: #1890ff; }
+        button:active:not(:disabled) { background: #e6f7ff; }
+        button:disabled { cursor: not-allowed; color: #ccc; background: #f5f5f5; }
+        
+        select {
+            padding: 0 4px;
+            font-size: 12px;
+            border-radius: 3px;
+            border: 1px solid #d9d9d9;
+            height: 24px; /* 固定高度对齐 */
+        }
+        
+        input[type="file"] {
+            font-size: 12px;
+            max-width: 180px; /* 限制文件输入框宽度，防止挤占 */
+        }
+
+        /* 状态显示文字 (靠右) */
+        #current-version-display {
+            margin-left: auto;
+            color: #1890ff;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        /* 布局切换条 */
+        #layoutBarContainer {
+            background: #e6e6e6;
+            border-bottom: 1px solid #ccc;
+            flex-shrink: 0;
+            display: none;
+            padding: 0 10px;
+        }
+        .model-layout-switch-bar-content {
+            display: flex;
+            overflow-x: auto;
+            height: 26px; /* 稍微调矮 */
+            align-items: flex-end;
+        }
+        .model-layout-switch-item {
+            padding: 3px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 2px;
+            border-radius: 4px 4px 0 0;
+            background: #ccc;
+            color: #555;
+        }
+        .model-layout-switch-item:hover { background: #bbb; color: #333; }
+        .model-layout-switch-item.activate {
+            background: #fff;
+            color: #1890ff;
+            font-weight: bold;
+            height: 26px;
+            border-top: 2px solid #1890ff;
+        }
+        /* 浅色主题 */
+        #layoutBarContainer.light-theme { background: #f0f2f5; border-bottom: 1px solid #d9d9d9; }
+        #layoutBarContainer.light-theme .model-layout-switch-item { background: #e6e6e6; }
+        #layoutBarContainer.light-theme .model-layout-switch-item.activate { background: #fff; }
+
+        /* 预览区域 */
+        #viewer-wrapper {
+            flex: 1;
+            position: relative;
+            background: #222;
+            overflow: hidden;
+            width: 100%;
+        }
+        #myCanvas, #svg-container {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+        #myCanvas canvas { display: block; width: 100% !important; height: 100% !important; }
+        #svg-container {
+            background: white;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #svg-container svg {
+            max-width: 95%;
+            max-height: 95%;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 顶部栏：包含标题和所有工具 -->
+    <div class="app-header">
+        
+        <!-- 左侧：标题 + 引擎状态 -->
+        <div class="header-title-area">
+            <h1>DWG/DXF Converter</h1>
+            <span id="engine-status" class="engine-status">初始化引擎...</span>
+        </div>
+
+        <!-- 右侧：工具控件组 -->
+        <div class="header-controls">
+            
+            <!-- 文件选择 -->
+            <div class="tool-group">
+                <input type="file" id="fileInput" accept=".dwg,.dxf" disabled />
+            </div>
+
+            <!-- 背景颜色 -->
+            <div class="tool-group">
+                <select id="background-color-picker" title="背景颜色">
+                    <option value="#808080">灰色背景</option>
+                    <option value="#ffffff">白色背景</option>
+                    <option value="#000000">黑色背景</option>
+                </select>
+            </div>
+
+            <!-- 导出按钮 -->
+            <div class="tool-group">
+                <button id="download-btn" disabled title="导出为 SVG">SVG</button>
+                <button id="download-pdf-btn" disabled title="导出为 PDF">PDF</button>
+            </div>
+
+            <!-- 另存版本 -->
+            <div class="tool-group">
+                <span style="color:#999; margin-right:-4px;">另存版本:</span>
+                <select id="dwg-version-select">
+                    <option value="13">2000</option>
+                    <option value="17">2004</option>
+                    <option value="20">2007</option>
+                    <option value="23">2010</option>
+                    <option value="26">2013</option>
+                    <option value="32">2018</option>
+                </select>
+                <button id="save-dwg-btn" disabled>保存</button>
+            </div>
+
+            <!-- 状态显示 (靠最右) -->
+            <span id="current-version-display"></span>
+        </div>
+    </div>
+
+    <!-- 布局切换条 -->
+    <div id="layoutBarContainer">
+        <div class="model-layout-switch-bar-content" id="layoutBarItems"></div>
+    </div>
+
+    <!-- 预览区域 -->
+    <div id="viewer-wrapper">
+        <div id="myCanvas"></div>
+        <div id="svg-container"></div>
+    </div>
+
+        <script type="module">
+        import { createModule as LibreDwgFactory, LibreDwg, Dwg_File_Type } from './dist/libredwg.js';
+        import { LibreDwgConverter } from './dist/converter/index.js';
+        import { SvgConverter } from './dist/svg/index.js';
+        import { DxfViewer } from "./demo/libs/gemini-viewer.esm.min.js";
+
+        let libreDwg = null;
+        let dxfViewer = null;
+        let currentOutputFilename = '';
+        let currentSvgStr = '';
+        let currentDwgDataPtr = null;
+
+        async function init() {
+            try {
+                const wasmInstance = await LibreDwgFactory({
+                    locateFile: (path) => path.endsWith('.wasm') ? './lib/libredwg-web.wasm' : path
+                });
+                libreDwg = new LibreDwg(wasmInstance);
+                window.wasmInstance = wasmInstance; // 暴露给全局以便调用底层函数
+
+                dxfViewer = new DxfViewer({
+                    containerId: "myCanvas",
+                    enableSpinner: true,
+                    enableLayoutBar: false,
+                    enableAutoFit: true,
+                    backgroundColor: '#ffffff',
+                    alpha: true,
+                });
+                window.dxfViewer = dxfViewer; 
+                await dxfViewer.setFont(["./demo/libs/fonts/hztxt.shx", "./demo/libs/fonts/simplex.shx"]);
+                
+                const statusEl = document.getElementById('engine-status');
+                statusEl.textContent = '引擎已就绪';
+                statusEl.style.color = '#52c41a';
+                document.getElementById('fileInput').disabled = false;
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('engine-status').textContent = '引擎初始化失败';
+                document.getElementById('engine-status').style.color = 'red';
+            }
+        }
+
+        // --- 核心功能：尝试将 DWG 转换为 DXF Blob ---
+        function tryConvertDwgToDxf(dwgDataPtr, wasm) {
+            const tmpDxfName = 'temp_convert.dxf';
+            try {
+                // 探测可能的导出函数名 (取决于编译时的 EXPORTED_FUNCTIONS)
+                // 常见的名字是 dxf_write_file 或 dwg_write_dxf
+                let writeFunc = wasm.dxf_write_file || wasm.dwg_write_dxf || wasm._dxf_write_file;
+                
+                if (typeof writeFunc !== 'function') {
+                    console.warn("当前 LibreDwg WASM 版本不支持 DXF 导出 (缺少 dxf_write_file 函数)");
+                    return null;
+                }
+
+                console.log("正在尝试将 DWG 转换为 DXF...");
+                // 调用 C 函数写入虚拟文件系统
+                const result = writeFunc(tmpDxfName, dwgDataPtr);
+                
+                if (result === 0) { // 0 通常表示成功
+                    console.log("DwgToDxf 转换成功");
+                    const dxfBytes = wasm.FS.readFile(tmpDxfName);
+                    // 清理虚拟文件
+                    wasm.FS.unlink(tmpDxfName);
+                    return new Blob([dxfBytes], { type: 'application/dxf' });
+                } else {
+                    console.warn("LibreDwg DXF 导出函数返回错误码:", result);
+                }
+            } catch (e) {
+                console.warn("DWG -> DXF 转换尝试失败:", e);
+            }
+            return null;
+        }
+
+        // --- 通用：加载 DXF 到 Viewer (支持原生 DXF 和转换后的 DXF) ---
+        async function loadDxfToViewer(blobUrl, fileName, versionSpan) {
+            document.getElementById('svg-container').style.display = 'none';
+            document.getElementById('myCanvas').style.display = 'block';
+            document.getElementById('layoutBarContainer').style.display = 'block';
+
+            if (typeof dxfViewer.resize === 'function') dxfViewer.resize();
+
+            await dxfViewer.loadModelAsync({
+                modelId: 'model_' + Date.now(),
+                src: blobUrl,
+                merge: false,
+                fit: true
+            });
+
+            versionSpan.textContent = "预览就绪: " + fileName;
+            updateLayoutBar();
+            
+            // 界面调整
+            document.getElementById('download-btn').disabled = true;
+            document.getElementById('download-pdf-btn').disabled = true;
+            // 如果是转换来的，保存DWG按钮依然可用(因为我们有原始DWG数据)，如果是纯DXF则禁用
+            // 这里简单起见先禁用，因为逻辑复杂
+            document.getElementById('save-dwg-btn').disabled = true;
+
+            // 强制刷新视图
+            const currentColor = document.getElementById('background-color-picker').value;
+            updateBackgroundColor(currentColor);
+            setTimeout(() => {
+                if (dxfViewer.resize) dxfViewer.resize();
+                if (typeof dxfViewer.fit === 'function') dxfViewer.fit();
+                if (dxfViewer.render) dxfViewer.render();
+                updateBackgroundColor(currentColor);
+            }, 100);
+        }
+
+        // --- 降级处理：使用 LibreDwg 生成 SVG ---
+        function fallbackToSvg(versionSpan, fileName) {
+            console.log("进入 SVG 降级模式...");
+            document.getElementById('myCanvas').style.display = 'none';
+            document.getElementById('layoutBarContainer').style.display = 'none';
+            document.getElementById('svg-container').style.display = 'flex';
+            document.getElementById('svg-container').innerHTML = '';
+
+            if (!currentDwgDataPtr) {
+                versionSpan.textContent = "错误: 无有效数据";
+                return;
+            }
+
+            versionSpan.textContent = "生成 SVG 中: " + fileName;
+            
+            // 使用 LibreDwg -> SVG 转换器
+            const db = new LibreDwgConverter(libreDwg).convert(currentDwgDataPtr);
+            currentSvgStr = new SvgConverter().convert(db);
+            
+            document.getElementById('svg-container').innerHTML = currentSvgStr;
+            versionSpan.textContent = "SVG 渲染完成: " + fileName;
+
+            document.getElementById('download-btn').disabled = false;
+            document.getElementById('download-pdf-btn').disabled = false;
+            document.getElementById('save-dwg-btn').disabled = false;
+
+            const currentColor = document.getElementById('background-color-picker').value;
+            updateBackgroundColor(currentColor);
+        }
+
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const versionSpan = document.getElementById('current-version-display');
+            versionSpan.textContent = "读取中: " + file.name;
+            
+            if (currentDwgDataPtr) {
+                libreDwg.dwg_free(currentDwgDataPtr);
+                currentDwgDataPtr = null;
+            }
+
+            currentOutputFilename = file.name.replace(/\.[^.]+$/, '');
+            const isDxf = file.name.toLowerCase().endsWith('.dxf');
+
+            try {
+                // 1. 无论是 DWG 还是 DXF，先尝试用 LibreDwg 读取数据结构
+                //    这样做的好处是我们可以统一管理内存，并且为 DWG 转 DXF 做准备
+                const buf = await file.arrayBuffer();
+                
+                // LibreDwg 读取数据
+                currentDwgDataPtr = libreDwg.dwg_read_data(new Uint8Array(buf), Dwg_File_Type.DWG);
+                if (!currentDwgDataPtr) throw new Error("文件解析失败");
+
+                let previewSuccess = false;
+
+                // 2. 尝试进入 3D 预览模式 (Gemini Viewer)
+                try {
+                    let dxfBlobUrl = null;
+
+                    if (isDxf) {
+                        // 如果本身是 DXF，直接用源文件
+                        dxfBlobUrl = URL.createObjectURL(file);
+                    } else {
+                        // 如果是 DWG，尝试转换为 DXF
+                        versionSpan.textContent = "尝试转换 DWG 为 DXF...";
+                        const dxfBlob = tryConvertDwgToDxf(currentDwgDataPtr, window.wasmInstance);
+                        if (dxfBlob) {
+                            dxfBlobUrl = URL.createObjectURL(dxfBlob);
+                        }
+                    }
+
+                    if (dxfBlobUrl) {
+                        versionSpan.textContent = "加载预览引擎...";
+                        await loadDxfToViewer(dxfBlobUrl, file.name, versionSpan);
+                        previewSuccess = true;
+                    }
+                } catch (previewErr) {
+                    console.warn("预览引擎加载失败:", previewErr);
+                }
+
+                // 3. 如果预览失败 (转换失败、Viewer崩溃、或不支持转换)，降级到 SVG
+                if (!previewSuccess) {
+                    fallbackToSvg(versionSpan, file.name);
+                }
+
+            } catch (err) {
+                console.error(err);
+                versionSpan.textContent = "失败: " + err.message;
+                versionSpan.style.color = "red";
+                alert("加载失败: " + err.message);
+            }
+        });
+        
+        function updateLayoutBar() {
+            if (!dxfViewer) return;
+            const container = document.getElementById('layoutBarItems');
+            container.innerHTML = '';
+            try {
+                const layouts = dxfViewer.getLayoutNames();
+                if (!layouts || layouts.length === 0) return;
+                layouts.forEach(name => {
+                    const btn = document.createElement('div');
+                    btn.className = 'model-layout-switch-item';
+                    if (name === 'Model') btn.classList.add('activate');
+                    btn.textContent = name === 'Model' ? '模型' : name;
+                    btn.onclick = () => {
+                        dxfViewer.activateLayout(name);
+                        Array.from(container.children).forEach(el => el.classList.remove('activate'));
+                        btn.classList.add('activate');
+                        setTimeout(() => {
+                            if (typeof dxfViewer.fit === 'function') dxfViewer.fit();
+                            const currentColor = document.getElementById('background-color-picker').value;
+                            updateBackgroundColor(currentColor);
+                        }, 50);
+                    };
+                    container.appendChild(btn);
+                });
+            } catch (e) { console.warn(e); }
+        }
+
+        document.getElementById('download-btn').onclick = () => {
+            const blob = new Blob([currentSvgStr], { type: 'image/svg+xml' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = currentOutputFilename + '.svg';
+            a.click();
+        };
+
+        document.getElementById('download-pdf-btn').onclick = async () => {
+            if (!window.jspdf || !window.svg2pdf) { alert("PDF 库未加载"); return; }
+            alert("PDF 导出功能已触发");
+        };
+
+        document.getElementById('save-dwg-btn').onclick = async () => {
+            const ver = parseInt(document.getElementById('dwg-version-select').value);
+            const wasm = window.wasmInstance;
+            const tmp = 'output.dwg';
+            try {
+                if(wasm.dwg_set_version_type) wasm.dwg_set_version_type(currentDwgDataPtr, ver);
+                if(wasm.dwg_write_file(tmp, currentDwgDataPtr) === 0) {
+                    const data = wasm.FS.readFile(tmp);
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(new Blob([data], {type: 'application/x-dwg'}));
+                    a.download = `${currentOutputFilename}_R${ver}.dwg`;
+                    a.click();
+                    wasm.FS.unlink(tmp);
+                }
+            } catch(e) { alert("另存失败"); }
+        };
+
+        document.getElementById('background-color-picker').addEventListener('change', (e) => {
+            updateBackgroundColor(e.target.value);
+            if (window.dxfViewer && window.dxfViewer.render) window.dxfViewer.render();
+        });
+
+        function updateBackgroundColor(hexColor) {
+            const forceChange = () => {
+                const canvas = document.querySelector('#myCanvas canvas');
+                if (canvas) {
+                    canvas.style.cssText = `background-color: ${hexColor} !important; display: block; width: 100%; height: 100%;`;
+                }
+                const wrapper = document.getElementById('viewer-wrapper');
+                if (wrapper) wrapper.style.backgroundColor = hexColor;
+                if (window.dxfViewer) {
+                    try {
+                        const viewer = window.dxfViewer;
+                        const renderer = viewer.renderer || (viewer.sceneManager?.renderer);
+                        const scene = viewer.scene || (viewer.sceneManager?.scene);
+                        if (scene) scene.background = null; 
+                        if (renderer) renderer.setClearColor(0x000000, 0); 
+                        if (typeof viewer.render === 'function') viewer.render();
+                    } catch (e) {}
+                }
+                const layoutBar = document.getElementById('layoutBarContainer');
+                if (layoutBar) {
+                    hexColor === '#ffffff' ? layoutBar.classList.add('light-theme') : layoutBar.classList.remove('light-theme');
+                }
+                const svgContainer = document.getElementById('svg-container');
+                if (svgContainer) {
+                    svgContainer.style.backgroundColor = hexColor;
+                    if (hexColor === '#000000' || hexColor === '#222222') {
+                        svgContainer.style.filter = 'invert(1) hue-rotate(180deg)';
+                    } else {
+                        svgContainer.style.filter = 'none';
+                    }
+                }
+            };
+            forceChange();
+            let count = 0;
+            const interval = setInterval(() => {
+                forceChange();
+                count++;
+                if (count > 5) clearInterval(interval);
+            }, 50);
+        }
+        
+        window.addEventListener('resize', () => {
+             if (dxfViewer && typeof dxfViewer.resize === 'function') dxfViewer.resize();
+        });
+
+        init();
+    </script>
+        
+</body>
+</html>

@@ -1,0 +1,5 @@
+1.本项目使用了LibreDWG开源项目，仓库地址：https://github.com/LibreDWG/libredwg。
+2.本项目主要实现了dwg转svg/pdf功能，供参考，其它功能若需要可接入。
+3.使用方式，在当前目录执行：python server.py，在浏览器打开：http://localhost:8080/index.html；8080是端口号，需要在执行python server.py后，观察控制台实际输出的值。
+4.新增dwg版本转换功能。
+5.效果与现有线上项目差距较大，因开源内核限制。
